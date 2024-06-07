@@ -76,6 +76,11 @@ class Dfinder : public edm::one::EDAnalyzer<edm::one::WatchRuns>
         edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> idealMagneticFieldRecordToken_;
         edm::ParameterSet theConfig;
 
+        std::vector<reco::TransientTrack> ttks_;
+        std::unique_ptr<AdaptiveVertexFitter> theFitter_;
+        std::map<size_t, size_t> ttksM_;
+        bool refitPV_;
+
         bool detailMode_;
         bool dropUnusedTracks_;
         std::vector<int> Dchannel_;
@@ -221,6 +226,7 @@ Dfinder::Dfinder(const edm::ParameterSet& iConfig):theConfig(iConfig)
     makeDntuple_ = iConfig.getParameter<bool>("makeDntuple");
     doDntupleSkim_ = iConfig.getParameter<bool>("doDntupleSkim");
     printInfo_ = iConfig.getParameter<bool>("printInfo");
+    refitPV_ = iConfig.getParameter<bool>("refitPV");
     // readDedx_ = iConfig.getParameter<bool>("readDedx");
     // MVAMapLabelInputTag_ = iConfig.getParameter<edm::InputTag>("MVAMapLabel");
     // MVAMapLabel_ = consumes<edm::ValueMap<float> >(iConfig.getParameter<edm::InputTag>("MVAMapLabel"));
@@ -483,6 +489,16 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
 
     // std::vector<pat::PackedCandidate>   input_tracks;
     auto input_tracks = *tks;
+    // convert to transient tracks
+    ttks_.clear();
+    ttks_.reserve(tks->size());
+    ttksM_.clear();
+    for (size_t i=0; i<tks->size(); i++)
+      if ((*tks)[i].hasTrackDetails()) {
+        ttks_.emplace_back((*tks)[i].pseudoTrack(), &(*bField));
+        ttksM_[i] = ttks_.size()-1;
+      }
+    theFitter_.reset(new AdaptiveVertexFitter());
     // std::vector<pat::PackedCandidate>   input_losttracks;
     // input_losttracks = *losttks;
     // input_tracks.insert(input_tracks.end(), input_losttracks.begin(), input_losttracks.end());
@@ -1972,6 +1988,8 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                     tktkResCands.clear();
                     unfitted_tktk_4vec.SetPxPyPzE(0., 0., 0., 0.);
                     unfitted_tktkRes_4vec.SetPxPyPzE(0., 0., 0., 0.);
+                    auto tktk_WithoutD = ttks_;
+                    auto tktkRes_WithoutD = ttks_;
 
                     //push back the Res tracks as first tracks
                     ParticleMass tk_mass;
@@ -1981,11 +1999,12 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                     std::vector<float> pushbackTrkMassHypo;
                     std::vector<float> pushbackResTrkMassHypo;
                     float tk_sigma;
+
                     for(int p = 0; p < int(selectedTkhidxSet[0].size()); p++){       // all Set has same size, could also use [i] as the index for selectedTkhidxSet[i] 
                         temp_vec.SetXYZM(input_tracks[selectedTkhidxSet[i][p]].px(), input_tracks[selectedTkhidxSet[i][p]].py(), input_tracks[selectedTkhidxSet[i][p]].pz(), fabs(TkMassCharge[p].first));
                         unfitted_tktk_4vec += temp_vec;
                         if(TkMassCharge[p].second==0) continue; // push resonace duaghter particle first here, other particle later
-                        reco::TransientTrack tkTT(input_tracks[selectedTkhidxSet[i][p]].pseudoTrack(), &(*bField) );
+                        reco::TransientTrack tkTT(ttks_[ttksM_[selectedTkhidxSet[i][p]]]);
                         if (!tkTT.isValid()) continue;
                         tk_mass = fabs(TkMassCharge[p].first);
                         tk_sigma = Functs.getParticleSigma(tk_mass);
@@ -1993,12 +2012,14 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                             tktk_candidate.push_back(pFactory.particle(tkTT,tk_mass,chi,ndf,tk_sigma));
                             pushbackTrkIdx.push_back(selectedTkhidxSet[i][p]);
                             pushbackTrkMassHypo.push_back(tk_mass);
+                            tktk_WithoutD.erase(tktk_WithoutD.begin() + selectedTkhidxSet[i][p]);
                         }
                         if(tktkRes_mass>0){
                             unfitted_tktkRes_4vec += temp_vec;
                             tktkRes_candidate.push_back(pFactory.particle(tkTT,tk_mass,chi,ndf,tk_sigma));
                             pushbackResTrkIdx.push_back(selectedTkhidxSet[i][p]);
                             pushbackResTrkMassHypo.push_back(tk_mass);
+                            tktkRes_WithoutD.erase(tktkRes_WithoutD.begin() + selectedTkhidxSet[i][p]);
                         }
                     }
 
@@ -2026,13 +2047,14 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                     //push back the other tracks
                     for(int p = 0; p < int(selectedTkhidxSet[0].size()); p++){        
                         if(TkMassCharge[p].second==1) continue;
-                        reco::TransientTrack tkTT(input_tracks[selectedTkhidxSet[i][p]].pseudoTrack(), &(*bField) );
+                        reco::TransientTrack tkTT(ttks_[ttksM_[selectedTkhidxSet[i][p]]]);
                         if (!tkTT.isValid()) continue;
                         tk_mass = fabs(TkMassCharge[p].first);
                         tk_sigma = Functs.getParticleSigma(tk_mass);
                         tktk_candidate.push_back(pFactory.particle(tkTT,tk_mass,chi,ndf,tk_sigma));
                         pushbackTrkIdx.push_back(selectedTkhidxSet[i][p]);
                         pushbackTrkMassHypo.push_back(tk_mass);
+                        tktk_WithoutD.erase(tktk_WithoutD.begin() + selectedTkhidxSet[i][p]);
                     }
                     DMassCutLevel[Dchannel_number-1]->Fill(5);
 
@@ -2134,9 +2156,17 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                         DInfo.tktkRes_alphaToSV[DInfo.size] = Res_svTosvVec.Angle(Res_dVec);
                         if( DInfo.tktkRes_alphaToSV[DInfo.size] > tktkRes_alphaToSVCut_[Dchannel_number-1]) continue;
 
+                        //refit primary vertex without daughters
+                        auto primaryV = thePrimaryV;
+                        if (refitPV_ && tktkRes_WithoutD.size() > 1) {
+                          const TransientVertex pv(theFitter_->vertex(tktkRes_WithoutD));
+                          if (pv.isValid())
+                            primaryV = reco::Vertex(pv);
+                        }
+
                         VertexDistance3D Res_a3d;
-                        DInfo.tktkRes_svpvDistance[DInfo.size] = Res_a3d.distance(thePrimaryV,tktkRes_VFPvtx->vertexState()).value();
-                        DInfo.tktkRes_svpvDisErr[DInfo.size] = Res_a3d.distance(thePrimaryV,tktkRes_VFPvtx->vertexState()).error();
+                        DInfo.tktkRes_svpvDistance[DInfo.size] = Res_a3d.distance(primaryV,tktkRes_VFPvtx->vertexState()).value();
+                        DInfo.tktkRes_svpvDisErr[DInfo.size] = Res_a3d.distance(primaryV,tktkRes_VFPvtx->vertexState()).error();
                         if(DInfo.tktkRes_pt[DInfo.size] <= tktkRes_dCutSeparating_PtVal_[Dchannel_number-1] && (DInfo.tktkRes_svpvDistance[DInfo.size]/DInfo.tktkRes_svpvDisErr[DInfo.size]) < tktkRes_svpvDistanceCut_lowptD_[Dchannel_number-1]) continue;
                         else if( DInfo.tktkRes_pt[DInfo.size] > tktkRes_dCutSeparating_PtVal_[Dchannel_number-1] && (DInfo.tktkRes_svpvDistance[DInfo.size]/DInfo.tktkRes_svpvDisErr[DInfo.size]) < tktkRes_svpvDistanceCut_highptD_[Dchannel_number-1]) continue;
 
@@ -2200,17 +2230,25 @@ void Dfinder::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
                     DInfo.pz[DInfo.size]              = tktk_4vec.Pz();
                     DInfo.MaxDoca[DInfo.size]         = MaximumDoca;
 
+                    //refit primary vertex without daughters
+                    auto primaryV = thePrimaryV;
+                    if (refitPV_ && tktk_WithoutD.size() > 1) {
+                      const TransientVertex pv(theFitter_->vertex(tktk_WithoutD));
+                      if (pv.isValid())
+                        primaryV = reco::Vertex(pv);
+                    }
+
                     VertexDistance3D a3d;
                     //https://github.com/cms-sw/cmssw/blob/CMSSW_7_5_0/RecoVertex/VertexTools/src/VertexDistance3D.cc
-                    DInfo.svpvDistance[DInfo.size] = a3d.distance(thePrimaryV,tktk_VFPvtx->vertexState()).value();
-                    DInfo.svpvDisErr[DInfo.size] = a3d.distance(thePrimaryV,tktk_VFPvtx->vertexState()).error();
+                    DInfo.svpvDistance[DInfo.size] = a3d.distance(primaryV,tktk_VFPvtx->vertexState()).value();
+                    DInfo.svpvDisErr[DInfo.size] = a3d.distance(primaryV,tktk_VFPvtx->vertexState()).error();
                     if( DInfo.pt[DInfo.size] <= dCutSeparating_PtVal_[Dchannel_number-1] && (DInfo.svpvDistance[DInfo.size]/DInfo.svpvDisErr[DInfo.size]) < svpvDistanceCut_lowptD_[Dchannel_number-1]) continue;
                     else if( DInfo.pt[DInfo.size] > dCutSeparating_PtVal_[Dchannel_number-1] && (DInfo.svpvDistance[DInfo.size]/DInfo.svpvDisErr[DInfo.size]) < svpvDistanceCut_highptD_[Dchannel_number-1]) continue;
                     DMassCutLevel[Dchannel_number-1]->Fill(12);
 
-                    reco::Vertex::Point vp1(thePrimaryV.position().x(), thePrimaryV.position().y(), 0.);
+                    reco::Vertex::Point vp1(primaryV.position().x(), primaryV.position().y(), 0.);
                     reco::Vertex::Point vp2(tktk_VFPvtx->vertexState().position().x(), tktk_VFPvtx->vertexState().position().y(), 0.);
-                    ROOT::Math::SVector<double, 6> sv1(thePrimaryV.covariance(0,0), thePrimaryV.covariance(0,1), thePrimaryV.covariance(1,1), 0., 0., 0.);
+                    ROOT::Math::SVector<double, 6> sv1(primaryV.covariance(0,0), primaryV.covariance(0,1), primaryV.covariance(1,1), 0., 0., 0.);
                     ROOT::Math::SVector<double, 6> sv2(tktk_VFPvtx->vertexState().error().cxx(), tktk_VFPvtx->vertexState().error().cyx(), tktk_VFPvtx->vertexState().error().cyy(), 0., 0., 0.);
                     reco::Vertex::Error ve1(sv1);
                     reco::Vertex::Error ve2(sv2);
