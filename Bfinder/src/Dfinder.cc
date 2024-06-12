@@ -244,7 +244,7 @@ Dfinder::Dfinder(const edm::ParameterSet& iConfig):theConfig(iConfig)
     }
 
     if (refitPV_)
-      theFitter_.reset(new AdaptiveVertexFitter());
+      theFitter_.reset(new AdaptiveVertexFitter(GeometricAnnealing(iConfig.getParameter<double>("chi2cutoff"))));
 }//}}}
 
 Dfinder::~Dfinder()

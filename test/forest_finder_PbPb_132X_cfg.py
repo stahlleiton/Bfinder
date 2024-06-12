@@ -22,7 +22,7 @@ process.HiForestInfo.info = cms.vstring("HiForest, miniAOD, 132X, mc")
 process.source = cms.Source("PoolSource",
     duplicateCheckMode = cms.untracked.string("noDuplicateCheck"),
     fileNames = cms.untracked.vstring(
-        'root://xrootd-cms.infn.it//store/user/sarteaga/PhotoFlux_Pythia/GNucleusToD0-Filtered_Pthat5_miniAOD/240520_042139/0000/photon_nucleus_pthat5_D0_miniAOD_1.root'
+        'root://xrootd-cms.infn.it//store/mc/HINPbPbSpring23MiniAOD/GNucleus-QCD_Pthat8_5p36TeV_pythia8/MINIAODSIM/NoPU_UPC_UPC_132X_mcRun3_2023_realistic_HI_v9-v2/2530000/e66bc877-5e9d-4d85-b4c9-ca2b8e3f4230.root'
     )
 )
 
@@ -211,7 +211,7 @@ process.Dfinder.detailMode = cms.bool(False)
 process.Dfinder.printInfo = cms.bool(False)
 process.Dfinder.refitPV = cms.bool(False)
 
-process.DfinderRefitPV = process.Dfinder.clone(refitPV = True);
+process.DfinderRefitPV = process.Dfinder.clone(refitPV = True, chi2cutoff = cms.double(4.0));
 process.DfinderSequence += process.DfinderRefitPV
 
 process.dfinder = cms.Path(process.DfinderSequence)
